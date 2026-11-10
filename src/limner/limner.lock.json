@@ -1,0 +1,54 @@
+{
+  "$comment": "limner's pinned generation setup. Read by limner only; edit together with a version bump.",
+  "$comment_s2v": "models, quantized and lora are the SAME values as script2video's imagegen.lock.json: both tools share the folders <models dir>/<name>__<revision[:12]>. Change them only together with s2v.",
+  "models": {
+    "qwen-image-edit-2511": {
+      "repo": "Qwen/Qwen-Image-Edit-2511",
+      "revision": "6f3ccc0b56e431dc6a0c2b2039706d7d26f22cb9",
+      "license": "Apache-2.0",
+      "size_gb": 54,
+      "required": false
+    },
+    "qwen-image-edit-2511-lightning": {
+      "repo": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+      "revision": "d74eba145674fd7e31b949324e148e21e7118abd",
+      "license": "Apache-2.0",
+      "allow_patterns": ["Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors"],
+      "size_gb": 0.9,
+      "required": true
+    }
+  },
+  "quantized": {
+    "name": "qwen-image-edit-2511-q4",
+    "from": "qwen-image-edit-2511",
+    "bits": 4,
+    "size_gb": 27,
+    "required": true
+  },
+  "lora": {
+    "model": "qwen-image-edit-2511-lightning",
+    "file": "Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16.safetensors",
+    "steps": 8
+  },
+  "model_license": "Apache-2.0",
+  "generation": {
+    "model": "qwen-image-edit-2511",
+    "steps": 8,
+    "guidance": 1.0,
+    "scheduler": "linear",
+    "negative_prompt": " ",
+    "blank": "#E0E0E0",
+    "letterbox": 1,
+    "multi_ref": "vae_only",
+    "skip_negative": false,
+    "cache_limit_bytes": 1000000000,
+    "memory_limit": {"min_gib": 24, "ram_fraction": 0.6},
+    "peak_gib": 22,
+    "min_ram_gib": 32,
+    "max_refs": 2
+  },
+  "setup": {
+    "min_ram_gb": 48,
+    "quantize_memory_limit": {"max_gib": 44, "ram_fraction": 0.7}
+  }
+}
