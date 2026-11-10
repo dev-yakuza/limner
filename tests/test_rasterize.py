@@ -182,9 +182,18 @@ def test_text_inside_links_and_commented_important_is_drawn(env, body):
     assert dark(env["root"]) > 300
 
 
-def test_text_not_drawn_is_reported(env):
-    """R1-3 safety net: text whose glyphs leave no ink is a problem, not a silent success."""
-    obj, code = run(env["root"], svg('<text x="5" y="50" font-size="36" fill="none">abc</text>'))
+def test_text_not_drawn_is_reported(env, monkeypatch, capsys):
+    """R1-3 safety net: if the forced fonts ever stop applying (simulated by an empty style
+    sheet), the silent drop is reported."""
+    import json
+
+    from limner import cli
+
+    monkeypatch.setattr(rasterize, "style_sheet", lambda: ("", []))
+    with open(os.path.join(env["root"], "in.svg"), "w") as f:
+        f.write(svg('<text x="5" y="50" font-size="36" font-family="Nope">abc</text>'))
+    code = cli.main(["rasterize", "--svg", "in.svg", "--root", str(env["root"]), "--out", "o.png"])
+    obj = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert code == 4 and [p["code"] for p in obj["problems"]] == ["text_not_drawn"]
 
 
@@ -226,3 +235,53 @@ def test_descendant_selectors_are_matched_whole():
     clean, s = rasterize.sanitize(text, rasterize.MONO_NAMES)
     assert [m for _, m in s.texts] == [True, False]
     assert any(n["code"] == "css_selector_ignored" for n in s.notes)
+
+
+# --------------------------------------------------------------------------- review round 2
+
+
+@pytest.mark.parametrize("body", [
+    '<text x="5" y="50" font-size="36" fill="white">abc</text>',
+    '<text x="5" y="50" font-size="36" display="none">abc</text>',
+    '<text x="900" y="50" font-size="36">abc</text>',
+    '<defs><text id="t" x="5" y="50">abc</text></defs>',
+    '<text x="5" y="50"><title>tip</title></text>',
+    '<rect width="400" height="80" fill="black"/><text x="5" y="50" font-size="36" fill="black">abc</text>',
+])
+def test_invisible_by_design_is_not_text_not_drawn(env, body):
+    """R2-1."""
+    obj, code = run(env["root"], svg(body))
+    assert code == 0, obj
+
+
+def test_deep_descendant_selector_is_fast(env):
+    """R2-2: limner's own matching of a failing descendant chain over deep nesting is not
+    exponential (resvg's own CSS matching of such a document is not limner's to bound)."""
+    import time
+
+    d, k = 60, 8
+    body = '<style>x %s text { font-family: monospace }</style>' % " ".join(["g"] * k)
+    body += "<g>" * d + '<text x="5" y="50" font-size="36">deep</text>' + "</g>" * d
+    t = time.time()
+    clean, s = rasterize.sanitize(svg(body), rasterize.MONO_NAMES)
+    assert time.time() - t < 2 and [m for _, m in s.texts] == [False]
+    obj, code = run(env["root"], svg("<g>" * 300 + "</g>" * 300))
+    assert code == 2 and "deeper" in obj["error"]
+
+
+@pytest.mark.parametrize("attrs", ['width="0" height="10"', 'width="10" height="0"',
+                                   'width="0" height="0" viewBox="0 0 10 10"'])
+def test_empty_size_is_2(env, attrs):
+    """R2-5."""
+    obj, code = run(env["root"], '<svg xmlns="http://www.w3.org/2000/svg" %s/>' % attrs)
+    assert code == 2, obj
+    obj, code = run(env["root"], '<svg xmlns="http://www.w3.org/2000/svg" %s/>' % attrs, "o.png", "--width", "100")
+    assert code == 2, obj
+
+
+@pytest.mark.parametrize("target", ["o.png", "in.svg", ".limner/records/x.json"])
+def test_result_cannot_overwrite_out_inputs_or_state(env, target):
+    """R2-4."""
+    obj, code = run(env["root"], svg('<rect width="10" height="10"/>'), "o.png", "--result",
+                    os.path.join(env["root"], target))
+    assert code == 2, obj

@@ -43,6 +43,8 @@ def local(tag: str) -> str:
 # --------------------------------------------------------------------------- CSS (just enough)
 
 
+MAX_COMPOUNDS = 32  # parts of one CSS selector
+MAX_DEPTH = 256  # element nesting of the SVG
 COMPOUND = re.compile(r"(?:[A-Za-z][\w-]*|\*)?(?:[.#][\w-]+)*")
 
 
@@ -79,6 +81,8 @@ class Rule:
             comb = None
         if not self.chain:
             self.supported = False
+        if len(self.chain) > MAX_COMPOUNDS:
+            raise bad("a CSS selector has more than %d parts" % MAX_COMPOUNDS)
         self.specificity = (sum(len(c["ids"]) for _, c in self.chain), sum(len(c["classes"]) for _, c in self.chain),
                             sum(1 for _, c in self.chain if c["tag"]))
 
@@ -95,7 +99,15 @@ class Rule:
         if not self.supported:
             return False
 
+        memo: dict = {}  # (i, node) -> bool: without it a failing descendant chain backtracks exponentially
+
         def match_from(i, node) -> bool:
+            key = (i, id(node))
+            if key not in memo:
+                memo[key] = _match_from(i, node)
+            return memo[key]
+
+        def _match_from(i, node) -> bool:
             comb, comp = self.chain[i]
             if not self._one(comp, node):
                 return False
@@ -206,6 +218,12 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
         raise bad("not a well-formed SVG: %s" % e)
     if local(root.tag) != "svg":
         raise bad("the root element is not <svg>")
+    stack = [(root, 1)]
+    while stack:
+        el, d = stack.pop()
+        if d > MAX_DEPTH:
+            raise bad("the SVG nests elements deeper than %d" % MAX_DEPTH)
+        stack.extend((c, d + 1) for c in el)
     removed_ext, removed_unsafe = [], []
     parent = {c: p for p in root.iter() for c in p}
     for el in list(root.iter()):
@@ -355,6 +373,8 @@ def fix_size(svg_text: str) -> tuple[str, float, float]:
         if not vw:
             raise bad("the SVG needs an absolute height or a viewBox")
         h = w * vh / vw
+    if not (w > 0 and h > 0):
+        raise bad("the SVG's size %gx%g is empty" % (w, h))
     root.set("width", "%g" % w)
     root.set("height", "%g" % h)
     return ET.tostring(root, encoding="unicode"), w, h
@@ -392,17 +412,73 @@ def render(svg_text: str, width: int | None, background: str | None) -> bytes:
     return bytes(resvg_py.svg_to_bytes(**kw))
 
 
-def text_free(clean: str, width, background) -> bytes:
-    """The same SVG rendered with every <text> element removed (RGBA bytes)."""
-    from PIL import Image
+NON_RENDERED = {"defs", "symbol", "clipPath", "mask", "pattern", "marker", "title", "desc", "metadata",
+                "linearGradient", "radialGradient", "filter"}
+VISIBLE = ("fill:#000;fill-opacity:1;stroke:#fff;stroke-width:2px;stroke-opacity:1;opacity:1;display:inline;"
+           "visibility:visible;font-size:16px")
 
-    root = ET.fromstring(clean)
+
+def _strip_text(root) -> None:
     for p in list(root.iter()):
         for c in list(p):
             if local(c.tag) == "text":
                 p.remove(c)
-    png = render(ET.tostring(root, encoding="unicode"), width, background)
-    return Image.open(io.BytesIO(png)).tobytes()
+
+
+def _force_visible(root) -> bool:
+    """Move every rendered <text> to the end of the document (above everything), at the top left,
+    plainly visible (black fill with a white outline, opaque, displayed, no transforms or
+    positions). False when no text would ever be rendered."""
+    parent = {c: p for p in root.iter() for c in p}
+    moved = []
+    for el in list(root.iter()):
+        if local(el.tag) != "text":
+            continue
+        p, hidden = parent.get(el), False
+        while p is not None:
+            hidden = hidden or local(p.tag) in NON_RENDERED
+            p = parent.get(p)
+        if hidden:
+            continue
+        chars = "".join((n.text or "") for n in el.iter() if local(n.tag) not in NON_RENDERED) + \
+            "".join((n.tail or "") for n in el.iter() if n is not el)
+        if chars.strip():
+            moved.append(el)
+    for el in moved:
+        parent[el].remove(el)
+        for n in el.iter():
+            for k in ("transform", "x", "y", "dx", "dy", "rotate"):
+                n.attrib.pop(k, None)
+            n.set("style", VISIBLE)
+        el.set("x", "0")
+        el.set("y", "0.9em")
+        root.append(el)
+    return bool(moved)
+
+
+def _render_image(svg: str, width, background):
+    from PIL import Image
+
+    return Image.open(io.BytesIO(render(svg, width, background))).convert("RGBA")
+
+
+def text_not_drawn(clean: str, im, width, background) -> bool:
+    """The safety net for fonts that drop text silently: the picture equals the one without text,
+    AND it still does when every text is forced visible on the canvas. Text that is invisible by
+    design (white on white, display:none, off the canvas, unused in <defs>, only a <title>) is not
+    reported: forcing it visible makes it differ."""
+    from PIL import ImageChops
+
+    root = ET.fromstring(clean)
+    forced = ET.fromstring(clean)
+    if not _force_visible(forced):
+        return False
+    _strip_text(root)
+    bare = _render_image(ET.tostring(root, encoding="unicode"), width, background)
+    if ImageChops.difference(im.convert("RGBA"), bare).getbbox(alpha_only=False) is not None:
+        return False
+    shown = _render_image(ET.tostring(forced, encoding="unicode"), width, background)
+    return ImageChops.difference(shown, bare).getbbox(alpha_only=False) is None
 
 
 def cmd_rasterize(args) -> tuple[dict, int]:
@@ -441,7 +517,7 @@ def cmd_rasterize(args) -> tuple[dict, int]:
 
     im = Image.open(io.BytesIO(png))
     im.load()
-    if any(c.strip() for c, _ in s.texts) and im.tobytes() == text_free(clean, args.width, args.background):
+    if any(c.strip() for c, _ in s.texts) and text_not_drawn(clean, im, args.width, args.background):
         # the safety net: there is text, yet the picture is the same without it
         problems.append({"code": "text_not_drawn", "layer": None,
                          "detail": {"chars": "".join(c for c, _ in s.texts).strip()[:200]}})
