@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from PIL import Image, ImageDraw
 
 SS = 3  # supersampling factor
+SS_MAX_PX = 40_000_000  # the supersampled region never exceeds this
 INK, PAPER = (20, 20, 20, 255), (255, 255, 255, 255)
 WEIGHT = {"speech": 600, "shout": 900, "thought": 500, "narration": 500}
 KINDS = tuple(WEIGHT)
@@ -125,19 +126,22 @@ def draw(kind: str, box, tail, canvas_size: tuple[int, int]) -> Drawn:
     rx0, ry0 = max(0, int(math.floor(min(xs) - pad))), max(0, int(math.floor(min(ys) - pad)))
     rx1, ry1 = min(W, int(math.ceil(max(xs) + pad))), min(H, int(math.ceil(max(ys) + pad)))
     rx1, ry1 = max(rx1, rx0 + 1), max(ry1, ry0 + 1)
-    size = ((rx1 - rx0) * SS, (ry1 - ry0) * SS)
+    # 3x supersampling, less when the region is so large that 3x would pass 40M px
+    area = (rx1 - rx0) * (ry1 - ry0)
+    ss = next((k for k in (SS, 2) if area * k * k <= SS_MAX_PX), 1)
+    size = ((rx1 - rx0) * ss, (ry1 - ry0) * ss)
 
     def S(x, y):  # canvas px -> local supersampled px
-        return (x - rx0) * SS, (y - ry0) * SS
+        return (x - rx0) * ss, (y - ry0) * ss
 
     layer = Image.new("RGBA", size, (0, 0, 0, 0))
     body = Image.new("L", size, 0)
     tailm = Image.new("L", size, 0)
     d, db, dt = ImageDraw.Draw(layer), ImageDraw.Draw(body), ImageDraw.Draw(tailm)
-    u = scale * SS
+    u = scale * ss
     stroke = max(1, round(3 * u))
     lcx, lcy = S(cx, cy)
-    la, lb = a * SS, b * SS
+    la, lb = a * ss, b * ss
     ltip = S(*tip) if tip else None
     if kind == "narration":
         rect = [*S(box[0], box[1]), *S(box[2], box[3])]

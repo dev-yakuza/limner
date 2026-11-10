@@ -338,3 +338,31 @@ def test_golden_image(env):
         assert util.sha256_file(fonts.path_of(k)) == sha, "font %s changed" % k
     _, im = in_process(env["root"], GOLDEN)
     assert golden_hash(im) == g["layout_sha256"]
+
+
+# --------------------------------------------------------------------------- review round 1
+
+
+@pytest.mark.parametrize("patch", [
+    {"weight": "bold"}, {"stroke": 3}, {"size": 0.5}, {"align": "centre"}, {"valign": "center"},
+    {"min_size": 0}, {"runs": [{"text": "x", "weight": "heavy"}]}, {"color": 5},
+])
+def test_bad_field_types_are_2_not_70(env, patch):
+    """R1-9."""
+    obj, code = compose(env["root"], L(T([0, 0, 500, 100], "x", **patch)))
+    assert code == 2, (patch, obj)
+
+
+def test_bad_tail_is_2(env):
+    obj, code = compose(env["root"], L(B("speech", [100, 100, 400, 300], "x", tail=[150, "x"])))
+    assert code == 2
+
+
+def test_huge_crop_and_box_are_refused(env):
+    """R1-8."""
+    Image.new("RGB", (100, 100)).save(os.path.join(env["root"], "a.png"))
+    for layer in ({"type": "image", "src": "a.png", "box": [0, 0, 100, 100], "crop": [0, 0, 12000, 12000]},
+                  {"type": "image", "src": "a.png", "box": [0, 0, 12000, 12000]},
+                  B("speech", [0, 0, 12000, 12000], "x")):
+        obj, code = compose(env["root"], L(layer, w=200, h=200))
+        assert code == 2, (layer, obj)

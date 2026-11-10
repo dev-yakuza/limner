@@ -104,6 +104,77 @@ def low_contrast(bg: Image.Image, masks: list[tuple[Image.Image, tuple]]) -> flo
     return vals[int(len(vals) * 0.10)]
 
 
+def _num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _int(v) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def check_layer(layer: dict, i: int, W: int, H: int) -> None:
+    """Types, ranges and enums of one layer: a wrong field is exit 2, never an internal error."""
+    at = "layers[%d]" % i
+    box = parse_box(layer.get("box"), at)
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    if max(bw, bh) > CANVAS_MAX_SIDE or bw * bh > CANVAS_MAX_PX:
+        raise bad("%s: box %dx%d is over the limit (long side 8192, 40M px)" % (at, bw, bh))
+    t = layer["type"]
+
+    def color(key, default_ok=True):
+        if key in layer and layer[key] is not None:
+            parse_color(layer[key], "%s.%s" % (at, key))
+
+    def weight(v, where):
+        if not (_int(v) and 1 <= v <= 1000):
+            raise bad("%s: weight must be an integer from 1 to 1000" % where)
+
+    if t in ("text", "caption", "bubble"):
+        if "weight" in layer:
+            weight(layer["weight"], at)
+        color("color")
+        runs = layer.get("runs")
+        if not isinstance(runs, list) or not all(isinstance(r, dict) and isinstance(r.get("text"), str) for r in runs):
+            raise bad("%s.runs must be a list of {\"text\": …}" % at)
+        for k, r in enumerate(runs):
+            if "weight" in r:
+                weight(r["weight"], "%s.runs[%d]" % (at, k))
+            if r.get("color") is not None:
+                parse_color(r["color"], "%s.runs[%d].color" % (at, k))
+        size = layer.get("size")
+        if size is not None and not (_num(size) and 1 <= size <= CANVAS_MAX_SIDE):
+            raise bad("%s.size must be null or a number >= 1" % at)
+        for k in ("min_size", "max_size"):
+            if k in layer and not (_num(layer[k]) and 1 <= layer[k] <= CANVAS_MAX_SIDE):
+                raise bad("%s.%s must be a number >= 1" % (at, k))
+        if layer.get("align", "left") not in ("left", "center", "right"):
+            raise bad("%s.align must be left, center or right" % at)
+        if layer.get("valign", "top") not in ("top", "middle", "bottom"):
+            raise bad("%s.valign must be top, middle or bottom" % at)
+        st = layer.get("stroke")
+        if st is not None:
+            if not isinstance(st, dict) or not (_int(st.get("width", 0)) and 0 <= st.get("width", 0) <= 100):
+                raise bad("%s.stroke must be {\"width\": 0-100, \"color\": …}" % at)
+            if st.get("color") is not None:
+                parse_color(st["color"], "%s.stroke.color" % at)
+        color("background")
+    if t == "bubble":
+        tail = layer.get("tail")
+        if tail is not None and not (isinstance(tail, list) and len(tail) == 2 and all(_num(v) for v in tail)):
+            raise bad("%s.tail must be [x, y]" % at)
+    if t == "image":
+        if layer.get("fit", "cover") not in ("cover", "contain", "stretch"):
+            raise bad("%s.fit must be cover, contain or stretch" % at)
+        b = layer.get("border")
+        if b is not None:
+            if not isinstance(b, dict) or not (_int(b.get("width", 0)) and 0 <= b.get("width", 0) <= 1000):
+                raise bad("%s.border must be {\"width\": int, \"color\": …}" % at)
+            if b.get("color") is not None:
+                parse_color(b["color"], "%s.border.color" % at)
+    if t == "rect":
+        color("color")
+
+
 class Composer:
     def __init__(self, root: paths.Root, layout: dict, where: str):
         self.root = root
@@ -159,6 +230,7 @@ class Composer:
             if not isinstance(layer, dict) or layer.get("type") not in LAYER_TYPES:
                 raise bad("layers[%d]: type must be one of %s" % (i, LAYER_TYPES))
             t = layer["type"]
+            check_layer(layer, i, W, H)
             box = parse_box(layer.get("box"), "layers[%d]" % i)
             if box[0] < 0 or box[1] < 0 or box[2] > W or box[3] > H:
                 self.problem("off_canvas", i, box=list(box))
@@ -218,6 +290,8 @@ class Composer:
         crop = layer.get("crop")
         if crop is not None:
             c = parse_box(crop, "layers[%d].crop" % i)
+            if c[0] < 0 or c[1] < 0 or c[2] > im.width or c[3] > im.height:
+                raise bad("layers[%d].crop %s is outside the %dx%d image" % (i, list(crop), im.width, im.height))
             im = im.crop(tuple(round(v) for v in c))
         x0, y0, x1, y1 = (round(v) for v in box)
         bw, bh = max(1, x1 - x0), max(1, y1 - y0)
