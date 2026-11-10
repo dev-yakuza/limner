@@ -35,6 +35,8 @@ To work on limner itself, run `uv sync --extra generate`, then `uv run lmn …` 
 ## Commands
 
 Every command prints one JSON line on stdout. `--result <file>` writes the same JSON to a file.
+For commands that take `--root`, the job file and `--result` must be inside the root, and nothing is
+written under `.git/` or `.claude/`, the state dir included.
 
 | command | what it does |
 |---|---|
@@ -43,7 +45,7 @@ Every command prints one JSON line on stdout. `--result <file>` writes the same 
 | `lmn cancel --run-id ID [--attempt A] --root R [--wait-seconds N]` | Asks the run to stop. If the worker is busy with a job, it stops the process group. |
 | `lmn generate --job J --root R` | For people: `run`, then shows progress until the run ends. Ctrl-C cancels. |
 | `lmn compose (--layout L \| --template T --data D) --root R --out O.png` | Draws text, bubbles and images, then checks them. |
-| `lmn rasterize --svg S --root R --out O.png [--width N] [--background #fff]` | Converts an SVG to a PNG. |
+| `lmn rasterize --svg S --root R --out O.png [--width N] [--background #fff]` | Converts an SVG to a PNG. The SVG needs absolute `width`/`height` (`em` counts as 16 px) or a `viewBox`. It reports `external_ref_removed`, `unsafe_removed`, `missing_glyph` and `text_not_drawn`. |
 | `lmn doctor [--json] [--smoke]` | Shows the platform, memory, model store, versions, fonts and the lock owner. |
 | `lmn setup [--yes]` | Gets the required models (or finds them already there), then runs `fonts install`. |
 | `lmn fonts install` | Downloads the pinned fonts and checks their sha256. |
