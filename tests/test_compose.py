@@ -366,3 +366,16 @@ def test_huge_crop_and_box_are_refused(env):
                   B("speech", [0, 0, 12000, 12000], "x")):
         obj, code = compose(env["root"], L(layer, w=200, h=200))
         assert code == 2, (layer, obj)
+
+
+@pytest.mark.parametrize("layer", [
+    {"type": "image", "src": "a.png", "box": [1e12, 0, 1e12 + 100, 100]},
+    B("speech", [0, 1e12, 100, 1e12 + 100], "x"),
+    T([1e12, 0, 1e12 + 100, 100], "x"),
+    B("speech", [0, 0, 100, 100], "x", tail=[1e12, 5]),
+])
+def test_far_away_coordinates_are_2(env, layer):
+    """R2-3 (Round 1 #9 remainder)."""
+    Image.new("RGB", (10, 10)).save(os.path.join(env["root"], "a.png"))
+    obj, code = compose(env["root"], L(layer, w=200, h=200))
+    assert code == 2, obj

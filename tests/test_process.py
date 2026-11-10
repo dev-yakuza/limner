@@ -663,3 +663,45 @@ def test_generate_ctrl_c_cancels(env, monkeypatch):
     os.killpg(p.pid, signal.SIGINT)
     obj, rc, err = result_of(p, timeout=90)
     assert (obj["state"], rc) == ("cancelled", 0), (obj, err)
+
+
+def _generate_in_session(env, jf, *extra):
+    return subprocess.Popen([sys.executable, "-m", "limner", "generate", "--job", jf, "--root", env["root"], *extra],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+
+
+def test_generate_ctrl_c_while_run_waits_busy(env):
+    """R2-6: Ctrl-C while the `lmn run` subprocess is still in its busy wait."""
+    lock, tok = hold_machine_lock(env["state"])
+    try:
+        jf = write_job(env["root"], [job("a")])
+        p = _generate_in_session(env, jf, "--wait", "60")
+        wait_for(lambda: attempt_dirs(env["root"]) and (read(os.path.join(attempt_dirs(env["root"])[0], "status.json"))
+                                                        or {}).get("state") == "starting", what="busy wait")
+        time.sleep(0.3)
+        os.killpg(p.pid, signal.SIGINT)
+        obj, rc, err = result_of(p, timeout=60)
+        assert rc == 11 and obj["state"] == "failed" and obj["failed"][0]["reason"] == "signal:2", (obj, err)
+        assert dirlock.read_owner(lock)["token"] == tok  # the machine lock was never taken from its holder
+    finally:
+        dirlock.release(lock, tok)
+
+
+def test_generate_ctrl_c_during_a_silent_health_check(env, monkeypatch):
+    """R2-6: Ctrl-C while `lmn run` holds the machine lock and waits on a port that never answers."""
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    try:
+        monkeypatch.setenv("S2V_TTS_PORT", str(srv.getsockname()[1]))
+        jf = write_job(env["root"], [job("a")])
+        p = _generate_in_session(env, jf)
+        wait_for(lambda: dirlock.read_owner(machine_lock(env)), what="run holds the machine lock")
+        os.killpg(p.pid, signal.SIGINT)
+        obj, rc, err = result_of(p, timeout=60)
+        assert rc == 11 and obj["failed"][0]["reason"] == "signal:2", (obj, err)
+        assert not os.path.exists(machine_lock(env))
+    finally:
+        srv.close()

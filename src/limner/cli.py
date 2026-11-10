@@ -135,7 +135,15 @@ def check_result_path(args) -> None:
         args.result = None  # not written unless it passes
 
         r = Root(root, getattr(args, "state_dir", None))
-        args.result = r.writable(out, "--result", png=False)
+        real = r.writable(out, "--result", png=False)
+        sd = util.fold(r.state_dir)
+        if util.fold(real) == sd or util.fold(real).startswith(sd.rstrip("/") + "/"):
+            raise Fail(util.BAD, "--result %s is inside the state dir" % out)
+        for flag in ("out", "svg", "layout", "data", "job"):
+            v = getattr(args, flag, None)
+            if v and util.fold(r.inside(v, "--" + flag)) == util.fold(real):
+                raise Fail(util.BAD, "--result %s is also --%s" % (out, flag))
+        args.result = real
 
 
 def emit(obj: dict, args) -> None:

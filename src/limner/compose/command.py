@@ -19,6 +19,7 @@ INPUT_MAX_SIDE, INPUT_MAX_PX = 8192, 64_000_000
 LAYER_TYPES = ("image", "text", "bubble", "caption", "rect")
 COLOR = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 CONTRAST_MIN = 3.0
+COORD_MIN, COORD_MAX = -CANVAS_MAX_SIDE, 2 * CANVAS_MAX_SIDE  # layer and avoid coordinates
 
 
 def parse_color(s, where="color") -> tuple:
@@ -116,6 +117,8 @@ def check_layer(layer: dict, i: int, W: int, H: int) -> None:
     """Types, ranges and enums of one layer: a wrong field is exit 2, never an internal error."""
     at = "layers[%d]" % i
     box = parse_box(layer.get("box"), at)
+    if not all(COORD_MIN <= v <= COORD_MAX for v in box):
+        raise bad("%s: box coordinates must be from %d to %d" % (at, COORD_MIN, COORD_MAX))
     bw, bh = box[2] - box[0], box[3] - box[1]
     if max(bw, bh) > CANVAS_MAX_SIDE or bw * bh > CANVAS_MAX_PX:
         raise bad("%s: box %dx%d is over the limit (long side 8192, 40M px)" % (at, bw, bh))
@@ -160,8 +163,9 @@ def check_layer(layer: dict, i: int, W: int, H: int) -> None:
         color("background")
     if t == "bubble":
         tail = layer.get("tail")
-        if tail is not None and not (isinstance(tail, list) and len(tail) == 2 and all(_num(v) for v in tail)):
-            raise bad("%s.tail must be [x, y]" % at)
+        if tail is not None and not (isinstance(tail, list) and len(tail) == 2 and
+                                     all(_num(v) and COORD_MIN <= v <= COORD_MAX for v in tail)):
+            raise bad("%s.tail must be [x, y] with coordinates from %d to %d" % (at, COORD_MIN, COORD_MAX))
     if t == "image":
         if layer.get("fit", "cover") not in ("cover", "contain", "stretch"):
             raise bad("%s.fit must be cover, contain or stretch" % at)
@@ -222,7 +226,10 @@ class Composer:
         for i, a in enumerate(self.layout.get("avoid", []) or []):
             if not isinstance(a, dict):
                 raise bad("avoid[%d]: expected an object" % i)
-            avoid.append((str(a.get("name", "avoid%d" % i)), parse_box(a.get("box"), "avoid[%d]" % i)))
+            ab = parse_box(a.get("box"), "avoid[%d]" % i)
+            if not all(COORD_MIN <= v <= COORD_MAX for v in ab):
+                raise bad("avoid[%d]: box coordinates must be from %d to %d" % (i, COORD_MIN, COORD_MAX))
+            avoid.append((str(a.get("name", "avoid%d" % i)), ab))
         bodies = {}  # layer index -> body mask (full canvas)
         tails = {}  # layer index -> tail polygon mask (full)
         occupied = {}  # layer index -> mask counted for overlap
@@ -485,6 +492,8 @@ def cmd_compose(args) -> tuple[dict, int]:
         if isinstance(layer, dict) and isinstance(layer.get("src"), str):
             inputs.append(root.inside(layer["src"], "layer src"))
     out = check_out(root, args.out, "compose", inputs)
+    if getattr(args, "result", None) and any(util.fold(p) == util.fold(args.result) for p in inputs):
+        raise bad("--result %s is also an input" % args.result)
     comp = Composer(root, layout, args.layout or args.template)
     im = comp.run()
     import limner
