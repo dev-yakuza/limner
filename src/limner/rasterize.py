@@ -26,6 +26,7 @@ TEXT_TAGS = ("text", "tspan", "textPath")
 DATA_IMAGE = re.compile(r"^\s*data:image/(png|jpeg|webp);base64,", re.I)
 URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I)
 IMPORT = re.compile(r"@import[^;]*;?", re.I)
+COMMENT = re.compile(r"/\*.*?\*/", re.S)
 FONT_IMPORTANT = re.compile(r"(font(?:-family)?\s*:[^;}]*?)\s*!\s*important", re.I)
 GENERIC = {"serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "ui-sans-serif",
            "ui-serif", "ui-monospace", "math", "emoji", "fangsong"}
@@ -42,32 +43,75 @@ def local(tag: str) -> str:
 # --------------------------------------------------------------------------- CSS (just enough)
 
 
+COMPOUND = re.compile(r"(?:[A-Za-z][\w-]*|\*)?(?:[.#][\w-]+)*")
+
+
 class Rule:
+    """A selector of compounds (`tag`, `*`, `.class`, `#id`) joined by descendant (space) or child
+    (`>`) combinators. Anything else (pseudo-classes, attributes, `+`, `~`) is unsupported: such a
+    rule is left out of the classification and reported in notes."""
+
     def __init__(self, selector: str, families: list[str], order: int):
         self.selector = selector.strip()
         self.families = families
         self.order = order
-        last = self.selector.split()[-1] if self.selector else ""
-        self.tag = None
-        self.ids, self.classes = [], []
-        m = re.match(r"^([A-Za-z][\w-]*|\*)?", last)
-        if m and m.group(1) and m.group(1) != "*":
-            self.tag = m.group(1)
-        rest = last[m.end():] if m else last
-        for kind, name in re.findall(r"([.#])([\w-]+)", rest):
-            (self.ids if kind == "#" else self.classes).append(name)
-        self.supported = re.fullmatch(r"(?:[A-Za-z][\w-]*|\*)?(?:[.#][\w-]+)*", last) is not None
-        self.specificity = (len(self.ids), len(self.classes), 1 if self.tag else 0)
+        toks = re.findall(r"\s*(>)\s*|\s+|([^\s>]+)", self.selector)
+        self.chain: list[tuple[str | None, dict]] = []  # (combinator before, compound), left to right
+        self.supported = bool(self.selector)
+        comb = None
+        for gt, comp in toks:
+            if gt:
+                comb = ">"
+                continue
+            if not comp:
+                if comb is None and self.chain:
+                    comb = " "
+                continue
+            if not COMPOUND.fullmatch(comp):
+                self.supported = False
+                break
+            m = re.match(r"^([A-Za-z][\w-]*|\*)?", comp)
+            tag = m.group(1) if m and m.group(1) and m.group(1) != "*" else None
+            ids, classes = [], []
+            for kind, name in re.findall(r"([.#])([\w-]+)", comp[m.end():]):
+                (ids if kind == "#" else classes).append(name)
+            self.chain.append((comb if self.chain else None, {"tag": tag, "ids": ids, "classes": classes}))
+            comb = None
+        if not self.chain:
+            self.supported = False
+        self.specificity = (sum(len(c["ids"]) for _, c in self.chain), sum(len(c["classes"]) for _, c in self.chain),
+                            sum(1 for _, c in self.chain if c["tag"]))
 
-    def matches(self, el) -> bool:
-        if not self.supported:
+    @staticmethod
+    def _one(c: dict, el) -> bool:
+        if c["tag"] and local(el.tag) != c["tag"]:
             return False
-        if self.tag and local(el.tag) != self.tag:
-            return False
-        if self.ids and el.get("id") not in self.ids:
+        if c["ids"] and el.get("id") not in c["ids"]:
             return False
         cls = set((el.get("class") or "").split())
-        return all(c in cls for c in self.classes)
+        return all(x in cls for x in c["classes"])
+
+    def matches(self, el, parent: dict) -> bool:
+        if not self.supported:
+            return False
+
+        def match_from(i, node) -> bool:
+            comb, comp = self.chain[i]
+            if not self._one(comp, node):
+                return False
+            if i == 0:
+                return True
+            nxt = self.chain[i][0]
+            p = parent.get(node)
+            if nxt == ">":
+                return p is not None and match_from(i - 1, p)
+            while p is not None:
+                if match_from(i - 1, p):
+                    return True
+                p = parent.get(p)
+            return False
+
+        return match_from(len(self.chain) - 1, el)
 
 
 def families_of(decls: str) -> list[str] | None:
@@ -129,6 +173,29 @@ def _clean_urls(value: str) -> tuple[str, bool]:
     return out, changed
 
 
+DATA_MAX_SIDE, DATA_MAX_PX = 8192, 64_000_000  # compose's input limits
+
+
+def check_data_image(uri: str) -> None:
+    """A data: image is decoded lazily and its size checked before resvg decodes it (a 50 KB PNG
+    can be 16000x16000)."""
+    import base64
+    import binascii
+
+    from PIL import Image
+
+    try:
+        data = base64.b64decode(uri.split(",", 1)[1], validate=False)
+        with Image.open(io.BytesIO(data)) as im:
+            w, h = im.size
+    except Image.DecompressionBombError:
+        raise bad("an embedded data: image is over the limit (a decompression bomb)")
+    except (binascii.Error, ValueError, OSError) as e:
+        raise bad("an embedded data: image is not readable (%s)" % e)
+    if max(w, h) > DATA_MAX_SIDE or w * h > DATA_MAX_PX:
+        raise bad("an embedded data: image is %dx%d, over the limit (long side 8192, 64M px)" % (w, h))
+
+
 def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
     s = Sanitized()
     if re.search(r"<!DOCTYPE|<!ENTITY", svg_text, re.I):
@@ -156,7 +223,9 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
                 removed_unsafe.append("%s@%s" % (t, lk))
             elif lk == "href":
                 v = el.attrib[k].strip()
-                if not (v.startswith("#") or DATA_IMAGE.match(v)):
+                if DATA_IMAGE.match(v):
+                    check_data_image(v)
+                elif not v.startswith("#"):
                     del el.attrib[k]
                     removed_ext.append("%s@href" % t)
             elif "url(" in el.attrib[k].lower():
@@ -172,9 +241,10 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
             txt, changed = _clean_urls(txt)
             if changed:
                 removed_ext.append("style url()")
+            txt = COMMENT.sub(" ", txt)  # `! /* x */ important` is still important to resvg
             el.text = FONT_IMPORTANT.sub(r"\1", txt)
         if el.get("style"):
-            el.set("style", FONT_IMPORTANT.sub(r"\1", el.get("style")))
+            el.set("style", FONT_IMPORTANT.sub(r"\1", COMMENT.sub(" ", el.get("style"))))
     if removed_ext:
         s.problems.append({"code": "external_ref_removed", "layer": None, "detail": {"where": removed_ext}})
     if removed_unsafe:
@@ -184,6 +254,10 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
     for el in root.iter():
         if local(el.tag) == "style" and el.text:
             rules += parse_css(el.text, len(rules))
+    ignored = sorted({r.selector for r in rules if not r.supported})
+    if ignored:
+        s.notes.append({"code": "css_selector_ignored", "detail": {"selectors": ignored}})
+    parent = {c: p for p in root.iter() for c in p}
     original: set[str] = set()
 
     def own_families(el):
@@ -194,7 +268,7 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
                 return f
         best = None
         for r in rules:
-            if r.matches(el):
+            if r.matches(el, parent):
                 key = (r.specificity, r.order)
                 if best is None or key >= best[0]:
                     best = (key, r.families)
@@ -207,25 +281,26 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
             return families_of("font:" + f)
         return None
 
-    def walk(el, inherited):
+    def walk(el, inherited, in_text):
         fam = own_families(el)
         eff = fam if fam is not None else inherited
         if fam:
             original.update(x for x in fam if x.lower() not in GENERIC)
         t = local(el.tag)
-        if t in TEXT_TAGS:
+        here = in_text or t in TEXT_TAGS
+        if here:
+            # every element that can carry text content (text, tspan, textPath, a, …) gets a class:
+            # an element without one would override the forced family with its own
             mono = is_mono(eff, mono_names)
             cls = [c for c in (el.get("class") or "").split() if c not in ("lmn-mono", "lmn-sans")]
             el.set("class", " ".join(cls + ["lmn-mono" if mono else "lmn-sans"]))
-            chars = (el.text or "")
-            s.texts.append((chars, mono))
+            s.texts.append((el.text or "", mono))
         for c in el:
-            walk(c, eff)
-            if local(c.tag) in TEXT_TAGS or local(el.tag) in TEXT_TAGS:
-                if c.tail and local(el.tag) in TEXT_TAGS:
-                    s.texts.append((c.tail, is_mono(eff, mono_names)))
+            walk(c, eff, here)
+            if here and c.tail:
+                s.texts.append((c.tail, is_mono(eff, mono_names)))
 
-    walk(root, None)
+    walk(root, None, False)
     if original:
         s.notes.append({"code": "font_substituted", "detail": {"families": sorted(original)}})
     ET.register_namespace("", SVG_NS)
@@ -236,34 +311,53 @@ def sanitize(svg_text: str, mono_names: set[str]) -> tuple[str, Sanitized]:
 # --------------------------------------------------------------------------- size
 
 
-def _length(v: str | None) -> float | None:
-    if not v:
-        return None
-    m = re.fullmatch(r"\s*([0-9]*\.?[0-9]+(?:[eE][-+]?\d+)?)\s*([a-z]*)\s*", v)
-    if not m or m.group(2) not in UNITS:
-        return None
-    return float(m.group(1)) * UNITS[m.group(2)]
+FONT_SIZE = 16.0  # resvg-py's default font_size: what `em` means on the root element
+REL_UNITS = {"em": FONT_SIZE, "ex": FONT_SIZE / 2}
 
 
-def intrinsic_size(svg_text: str) -> tuple[float, float]:
+def _length(v: str | None, what: str) -> float | None:
+    """px of an absolute or font-relative length; None for missing or `%`; exit 2 for anything
+    limner cannot size the way resvg will."""
+    if v is None or not v.strip() or v.strip().endswith("%"):
+        return None
+    m = re.fullmatch(r"\s*([0-9]*\.?[0-9]+(?:[eE][-+]?\d+)?)\s*([A-Za-z]*)\s*", v)
+    unit = m.group(2).lower() if m else None
+    if not m or (unit not in UNITS and unit not in REL_UNITS):
+        raise bad("the SVG's %s %r is not a length limner can size" % (what, v))
+    return float(m.group(1)) * (UNITS.get(unit) or REL_UNITS[unit])
+
+
+def fix_size(svg_text: str) -> tuple[str, float, float]:
+    """The SVG's size as resvg will draw it, written back onto the root as px, so that limner's
+    limit check and resvg's canvas are the same number. Without absolute sizes and a viewBox
+    (resvg would use the content's bounds) the SVG is refused."""
     root = ET.fromstring(svg_text)
-    w, h = _length(root.get("width")), _length(root.get("height"))
+    w, h = _length(root.get("width"), "width"), _length(root.get("height"), "height")
     vb = root.get("viewBox")
     vw = vh = None
     if vb:
         parts = re.split(r"[\s,]+", vb.strip())
-        if len(parts) == 4:
-            try:
-                vw, vh = float(parts[2]), float(parts[3])
-            except ValueError:
-                pass
+        try:
+            vw, vh = float(parts[2]), float(parts[3])
+        except (IndexError, ValueError):
+            vw = vh = None
+        if not (vw and vh and vw > 0 and vh > 0):
+            raise bad("the SVG's viewBox %r is not usable" % vb)
     if w is None and h is None:
-        w, h = vw or 100.0, vh or 100.0
+        if not vw:
+            raise bad("the SVG needs absolute width/height or a viewBox (its size would come from its content)")
+        w, h = vw, vh
     elif w is None:
-        w = h * (vw / vh) if vw and vh else h
+        if not vw:
+            raise bad("the SVG needs an absolute width or a viewBox")
+        w = h * vw / vh
     elif h is None:
-        h = w * (vh / vw) if vw and vh else w
-    return w, h
+        if not vw:
+            raise bad("the SVG needs an absolute height or a viewBox")
+        h = w * vh / vw
+    root.set("width", "%g" % w)
+    root.set("height", "%g" % h)
+    return ET.tostring(root, encoding="unicode"), w, h
 
 
 def check_size(w: float, h: float, what: str) -> None:
@@ -298,6 +392,19 @@ def render(svg_text: str, width: int | None, background: str | None) -> bytes:
     return bytes(resvg_py.svg_to_bytes(**kw))
 
 
+def text_free(clean: str, width, background) -> bytes:
+    """The same SVG rendered with every <text> element removed (RGBA bytes)."""
+    from PIL import Image
+
+    root = ET.fromstring(clean)
+    for p in list(root.iter()):
+        for c in list(p):
+            if local(c.tag) == "text":
+                p.remove(c)
+    png = render(ET.tostring(root, encoding="unicode"), width, background)
+    return Image.open(io.BytesIO(png)).tobytes()
+
+
 def cmd_rasterize(args) -> tuple[dict, int]:
     root = paths.Root(args.root, args.state_dir)
     fonts.require()
@@ -310,7 +417,7 @@ def cmd_rasterize(args) -> tuple[dict, int]:
         raise bad("--svg %s: %s" % (args.svg, e))
     mono_names = MONO_NAMES | {fonts.family(fonts.path_of(fonts.MONO)).lower()}
     clean, s = sanitize(svg_text, mono_names)
-    w, h = intrinsic_size(clean)
+    clean, w, h = fix_size(clean)
     check_size(w, h, "the SVG")
     if args.width is not None:
         if args.width <= 0:
@@ -334,6 +441,10 @@ def cmd_rasterize(args) -> tuple[dict, int]:
 
     im = Image.open(io.BytesIO(png))
     im.load()
+    if any(c.strip() for c, _ in s.texts) and im.tobytes() == text_free(clean, args.width, args.background):
+        # the safety net: there is text, yet the picture is the same without it
+        problems.append({"code": "text_not_drawn", "layer": None,
+                         "detail": {"chars": "".join(c for c, _ in s.texts).strip()[:200]}})
     san_path = root.sd("sanitized", root.rel(out)[:-4] + ".svg")
     paths.safe_makedirs(root, os.path.dirname(san_path))
     util.write_text_atomic(san_path, clean)

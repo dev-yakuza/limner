@@ -159,3 +159,70 @@ def test_effective_family_rules():
             '<text class="c">3</text><text font-family="monospace" class="b">4</text></svg>')
     clean, s = rasterize.sanitize(text, mono)
     assert [m for _, m in s.texts] == [True, True, True, False]  # id > class; style > rules; rules > attribute
+
+
+# --------------------------------------------------------------------------- review round 1
+
+
+T1 = "가나Ab字"
+
+
+@pytest.mark.parametrize("body", [
+    '<text x="5" y="50" font-size="36"><a style="font-family:Nope">%s</a></text>' % T1,
+    '<text x="5" y="50" font-size="36"><a font-family="Nope">%s</a></text>' % T1,
+    '<style>a { font-family: Nope }</style><text x="5" y="50" font-size="36"><a>%s</a></text>' % T1,
+    '<style>text { font-family: Nope !/**/important }</style><text x="5" y="50" font-size="36">%s</text>' % T1,
+    '<style>text { font-family: Nope ! /* x */ important }</style><text x="5" y="50" font-size="36">%s</text>' % T1,
+    '<text x="5" y="50" font-size="36" style="font-family:Nope !/**/important">%s</text>' % T1,
+])
+def test_text_inside_links_and_commented_important_is_drawn(env, body):
+    """R1-3."""
+    obj, code = run(env["root"], svg(body))
+    assert code == 0, obj
+    assert dark(env["root"]) > 300
+
+
+def test_text_not_drawn_is_reported(env):
+    """R1-3 safety net: text whose glyphs leave no ink is a problem, not a silent success."""
+    obj, code = run(env["root"], svg('<text x="5" y="50" font-size="36" fill="none">abc</text>'))
+    assert code == 4 and [p["code"] for p in obj["problems"]] == ["text_not_drawn"]
+
+
+@pytest.mark.parametrize("root_attrs", [
+    'width="700em" height="700em" viewBox="0 0 10 10"',
+    'width="2000ex" height="2000ex" viewBox="0 0 10 10"',
+    'width="100%" height="100%"',
+    '',
+])
+def test_size_limit_cannot_be_bypassed_by_units(env, root_attrs):
+    """R1-4: limner's size is the size resvg renders (or the SVG is refused)."""
+    s = '<svg xmlns="http://www.w3.org/2000/svg" %s><rect width="9000" height="9000" fill="red"/></svg>' % root_attrs
+    obj, code = run(env["root"], s)
+    assert code == 2, obj
+
+
+def test_em_size_is_what_resvg_draws(env):
+    s = '<svg xmlns="http://www.w3.org/2000/svg" width="10em" height="5em" viewBox="0 0 10 5"><rect width="10" height="5"/></svg>'
+    obj, code = run(env["root"], s)
+    assert code == 0 and Image.open(os.path.join(env["root"], "o.png")).size == (160, 80)
+
+
+def test_data_image_bomb_is_refused(env):
+    """R1-4: a small data: PNG that decodes to a huge image."""
+    import base64
+
+    buf = io.BytesIO()
+    Image.new("1", (9000, 9000), 1).save(buf, format="PNG", optimize=True)  # 81M px, about 10 KB
+    uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    obj, code = run(env["root"], svg('<image width="100" height="80" href="%s"/>' % uri))
+    assert code == 2 and "data:" in obj["error"], obj
+
+
+def test_descendant_selectors_are_matched_whole():
+    """R1-10."""
+    text = ('<svg xmlns="http://www.w3.org/2000/svg"><style>g.code text { font-family: monospace }'
+            ' text:first-child { font-family: monospace }</style>'
+            '<g class="code"><text>1</text></g><g><text>2</text></g></svg>')
+    clean, s = rasterize.sanitize(text, rasterize.MONO_NAMES)
+    assert [m for _, m in s.texts] == [True, False]
+    assert any(n["code"] == "css_selector_ignored" for n in s.notes)
