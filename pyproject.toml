@@ -1,0 +1,40 @@
+[project]
+name = "limner"
+version = "0.1.0"
+description = "A local image engine: model generation on Apple silicon, exact text compositing, SVG to PNG"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [{ name = "dev-yakuza" }]
+dependencies = [
+    "pillow==13.0.0",
+    "fonttools==4.66.1",
+    "resvg-py==0.5.0",
+]
+
+[project.optional-dependencies]
+# Model generation runs on Apple silicon only (MLX).
+generate = [
+    "mflux==0.22.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "huggingface_hub ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
+
+[project.scripts]
+lmn = "limner.cli:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/limner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv]
+# The MLX build script2video's imagegen is locked to (the 4-bit weights are shared with it).
+constraint-dependencies = ["mlx==0.32.3 ; sys_platform == 'darwin' and platform_machine == 'arm64'"]
