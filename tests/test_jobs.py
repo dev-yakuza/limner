@@ -81,7 +81,7 @@ def test_job_sha(tmp_path):
     assert jobs.job_sha(a, ["x"], LOCK) != jobs.job_sha(a, ["y"], LOCK)
     c, = jobs.validate(spec(job("a", seed=8)), r, LOCK)
     assert jobs.job_sha(c, [], LOCK) != jobs.job_sha(a, [], LOCK)
-    lock2 = dict(LOCK, generation=dict(LOCK["generation"], skip_negative=True))
+    lock2 = dict(LOCK, generation=dict(LOCK["generation"], skip_negative=not LOCK["generation"]["skip_negative"]))
     assert jobs.job_sha(a, [], lock2) != jobs.job_sha(a, [], LOCK)
 
 
