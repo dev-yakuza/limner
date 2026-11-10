@@ -1,0 +1,64 @@
+{
+ "version": 1,
+ "canvas": {
+  "preset": "instagram-4x5",
+  "background": "#ffffff"
+ },
+ "layers": [
+  {
+   "when": "{{image}}",
+   "type": "image",
+   "src": "{{image}}",
+   "box": [
+    0,
+    0,
+    1080,
+    810
+   ],
+   "fit": "cover"
+  },
+  {
+   "type": "text",
+   "box": [
+    72,
+    850,
+    1008,
+    1130
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{title}}"
+    }
+   ],
+   "align": "left",
+   "valign": "top",
+   "weight": 800,
+   "color": "#111111",
+   "min_size": 40,
+   "max_size": 96
+  },
+  {
+   "type": "text",
+   "box": [
+    72,
+    1150,
+    1008,
+    1280
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{subtitle}}"
+    }
+   ],
+   "align": "left",
+   "valign": "top",
+   "weight": 500,
+   "color": "#4b5563",
+   "min_size": 24,
+   "max_size": 44,
+   "when": "{{subtitle}}"
+  }
+ ]
+}

@@ -1,0 +1,75 @@
+{
+ "version": 1,
+ "canvas": {
+  "preset": "og",
+  "background": "#111827"
+ },
+ "layers": [
+  {
+   "when": "{{bg}}",
+   "type": "image",
+   "src": "{{bg}}",
+   "box": [
+    0,
+    0,
+    1200,
+    630
+   ],
+   "fit": "cover"
+  },
+  {
+   "when": "{{bg}}",
+   "type": "rect",
+   "box": [
+    0,
+    0,
+    1200,
+    630
+   ],
+   "color": "#000000a0"
+  },
+  {
+   "type": "text",
+   "box": [
+    80,
+    120,
+    1120,
+    400
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{title}}"
+    }
+   ],
+   "align": "left",
+   "valign": "bottom",
+   "weight": 800,
+   "color": "#ffffff",
+   "min_size": 36,
+   "max_size": 96
+  },
+  {
+   "type": "text",
+   "box": [
+    80,
+    424,
+    1120,
+    540
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{subtitle}}"
+    }
+   ],
+   "align": "left",
+   "valign": "top",
+   "weight": 500,
+   "color": "#d1d5db",
+   "min_size": 20,
+   "max_size": 40,
+   "when": "{{subtitle}}"
+  }
+ ]
+}

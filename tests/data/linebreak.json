@@ -1,0 +1,19 @@
+{
+  "$comment": "Line-break table (spec 7.3). Widths in em: East Asian wide/fullwidth characters 1, others 0.5. 'lines' are the expected lines; 'overflow' marks a unit wider than the line.",
+  "cases": [
+    {"text": "hello world foo", "width": 5.5, "lines": ["hello", "world foo"], "overflow": false, "why": "balanced: greedy gives 'hello world' / 'foo'"},
+    {"text": "Don't stop", "width": 3, "lines": ["Don't", "stop"], "overflow": false, "why": "apostrophe inside a Latin unit"},
+    {"text": "see https://example.com/a-b_c now", "width": 6, "lines": ["see", "https://example.com/a-b_c", "now"], "overflow": true, "why": "a URL is one unit; never split into characters"},
+    {"text": "a b\nc", "width": 10, "lines": ["a b", "c"], "overflow": false, "why": "explicit newline kept"},
+    {"text": "年末ジャンボ宝くじ", "width": 4, "lines": ["年末ジャ", "ンボ宝く", "じ"], "overflow": false, "why": "per-character breaks, never before small ャ"},
+    {"text": "今日は、晴れ。", "width": 3, "lines": ["今日", "は、晴", "れ。"], "overflow": false, "why": "、 and 。 never start a line"},
+    {"text": "「こんにちは」と言った", "width": 4, "lines": ["「こんに", "ちは」と", "言った"], "overflow": false, "why": "「 never ends a line, 」 and っ never start one"},
+    {"text": "ちょっと待って", "width": 2, "lines": ["ちょっ", "と", "待っ", "て"], "overflow": true, "why": "small kana stay with the character before"},
+    {"text": "日本語　テスト", "width": 3, "lines": ["日本語", "テスト"], "overflow": false, "why": "ideographic space dropped at the line end"},
+    {"text": "1等 7億円!", "width": 3, "lines": ["1等 7", "億円!"], "overflow": false, "why": "! never starts a line"},
+    {"text": "Hello世界", "width": 3, "lines": ["Hello", "世界"], "overflow": false, "why": "a break between Latin and kanji"},
+    {"text": "한국 돈으로 70억이 넘는다고?!", "width": 5, "lines": ["한국", "돈으로", "70억이", "넘는다고?!"], "overflow": false, "why": "Korean breaks only between eojeol"},
+    {"text": "가나다라마바사", "width": 3, "lines": ["가나다라마바사"], "overflow": true, "why": "an eojeol wider than the line is not split"},
+    {"text": "정말요 ?!", "width": 3, "lines": ["정말요 ?!"], "overflow": true, "why": "closing punctuation never starts a line, even after a space"}
+  ]
+}

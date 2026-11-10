@@ -1,0 +1,11 @@
+{
+ "$comment": "Golden pixels (sha256 of RGBA bytes) of tests/test_compose.py GOLDEN, BASIC layout. Re-derive only after looking at the image.",
+ "pillow": "12.3.0",
+ "fonts": {
+  "pretendard": "3090ccde0442bb347aa7685d9ba8b17436a60682df6e8f92a9a670de14056e22",
+  "noto-sans-jp": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f",
+  "noto-sans-kr": "194018e6b2b293a7964f037b25c0249ce1418bc9ab3c971060a03aa57861e252",
+  "jetbrains-mono": "48715a42ec242c21e9f02692891e147d022299a52e48d5e413e1a942193ffeda"
+ },
+ "layout_sha256": "adbadc136f0d418db1560dd8ce159643d4b2f5bac2b4c005644926677a81c0d9"
+}

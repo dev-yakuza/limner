@@ -1,0 +1,34 @@
+{
+ "type": "object",
+ "required": [
+  "heading",
+  "body",
+  "lang"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "heading": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 120
+  },
+  "body": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 1200
+  },
+  "page": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 20
+  },
+  "lang": {
+   "type": "string",
+   "enum": [
+    "ko",
+    "ja",
+    "en"
+   ]
+  }
+ }
+}

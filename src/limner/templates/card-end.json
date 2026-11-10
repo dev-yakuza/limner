@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "canvas": {
+  "preset": "instagram-4x5",
+  "background": "#111827"
+ },
+ "layers": [
+  {
+   "type": "text",
+   "box": [
+    96,
+    380,
+    984,
+    860
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{message}}"
+    }
+   ],
+   "align": "center",
+   "valign": "middle",
+   "weight": 700,
+   "color": "#ffffff",
+   "min_size": 32,
+   "max_size": 80
+  },
+  {
+   "type": "text",
+   "box": [
+    96,
+    900,
+    984,
+    990
+   ],
+   "lang": "{{lang}}",
+   "runs": [
+    {
+     "text": "{{handle}}"
+    }
+   ],
+   "align": "center",
+   "valign": "middle",
+   "weight": 500,
+   "color": "#9ca3af",
+   "min_size": 24,
+   "max_size": 40,
+   "when": "{{handle}}"
+  }
+ ]
+}

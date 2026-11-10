@@ -1,0 +1,34 @@
+{
+ "type": "object",
+ "required": [
+  "title",
+  "lang"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "title": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 120
+  },
+  "subtitle": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 200
+  },
+  "image": {
+   "type": [
+    "string",
+    "null"
+   ]
+  },
+  "lang": {
+   "type": "string",
+   "enum": [
+    "ko",
+    "ja",
+    "en"
+   ]
+  }
+ }
+}

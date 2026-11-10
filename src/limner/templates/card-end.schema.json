@@ -1,0 +1,28 @@
+{
+ "type": "object",
+ "required": [
+  "message",
+  "lang"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "message": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 300
+  },
+  "handle": {
+   "type": "string",
+   "minLength": 1,
+   "maxLength": 80
+  },
+  "lang": {
+   "type": "string",
+   "enum": [
+    "ko",
+    "ja",
+    "en"
+   ]
+  }
+ }
+}

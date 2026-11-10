@@ -1,0 +1,17 @@
+{
+ "type": "object",
+ "required": [
+  "panels"
+ ],
+ "additionalProperties": false,
+ "properties": {
+  "panels": {
+   "type": "array",
+   "maxItems": 6,
+   "items": {
+    "type": "string",
+    "minLength": 1
+   }
+  }
+ }
+}

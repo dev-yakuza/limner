@@ -1,0 +1,99 @@
+{
+ "version": 1,
+ "canvas": {
+  "preset": "instagram-4x5",
+  "background": "#ffffff"
+ },
+ "layers": [
+  {
+   "type": "image",
+   "src": "{{panels.0}}",
+   "box": [
+    24,
+    24,
+    532,
+    447
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  },
+  {
+   "type": "image",
+   "src": "{{panels.1}}",
+   "box": [
+    548,
+    24,
+    1056,
+    447
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  },
+  {
+   "type": "image",
+   "src": "{{panels.2}}",
+   "box": [
+    24,
+    463,
+    532,
+    887
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  },
+  {
+   "type": "image",
+   "src": "{{panels.3}}",
+   "box": [
+    548,
+    463,
+    1056,
+    887
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  },
+  {
+   "type": "image",
+   "src": "{{panels.4}}",
+   "box": [
+    24,
+    903,
+    532,
+    1326
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  },
+  {
+   "type": "image",
+   "src": "{{panels.5}}",
+   "box": [
+    548,
+    903,
+    1056,
+    1326
+   ],
+   "fit": "cover",
+   "border": {
+    "width": 4,
+    "color": "#000000"
+   }
+  }
+ ]
+}
