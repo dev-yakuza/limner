@@ -133,6 +133,20 @@ def load_model(spec: dict):
     except ImportError as e:
         raise EnvError("mflux is not the pinned version (%s)" % e) from e
     check_internals(QwenImageEdit, QwenEditUtil)
+    gen = spec["generation"]
+    try:  # the internals of the adopted spike options (S1 picture_prefix, S2 skip_negative)
+        import inspect
+
+        from mflux.models.qwen.tokenizer.qwen_vision_language_tokenizer import QwenVisionLanguageTokenizer
+        from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
+
+        if gen.get("multi_ref") == "picture_prefix" and \
+                "use_picture_prefix" not in inspect.signature(QwenVisionLanguageTokenizer).parameters:
+            raise EnvError("this mflux tokenizer has no use_picture_prefix")
+        if gen.get("skip_negative") and not callable(getattr(QwenImage, "compute_guided_noise", None)):
+            raise EnvError("this mflux lacks QwenImage.compute_guided_noise")
+    except ImportError as e:
+        raise EnvError("mflux is not the pinned version (%s)" % e) from e
 
     from . import models
 
@@ -140,7 +154,6 @@ def load_model(spec: dict):
     missing = models.generation_ready(lock)
     if missing:
         raise EnvError("models not ready: " + "; ".join(missing))
-    gen = spec["generation"]
     mx.set_cache_limit(int(gen["cache_limit_bytes"]))
 
     embeddings: dict = {}

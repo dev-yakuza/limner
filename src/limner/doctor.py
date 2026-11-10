@@ -37,6 +37,9 @@ def internals() -> dict:
         "m=[n for n in INTERNAL_METHODS if not callable(getattr(Q,n,None))]\n"
         "m+=[] if callable(getattr(U,'create_image_conditioning_latents',None)) else ['QwenEditUtil.create_image_conditioning_latents']\n"
         "m+=[] if callable(getattr(I,'compute_guided_noise',None)) else ['QwenImage.compute_guided_noise']\n"
+        "import inspect\n"
+        "from mflux.models.qwen.tokenizer.qwen_vision_language_tokenizer import QwenVisionLanguageTokenizer as T\n"
+        "m+=[] if 'use_picture_prefix' in inspect.signature(T).parameters else ['QwenVisionLanguageTokenizer(use_picture_prefix)']\n"
         "print(json.dumps(m))\n"
     )
     try:
