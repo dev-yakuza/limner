@@ -4,8 +4,6 @@ from `lmn run` to its worker (spec §6.1 step 7)."""
 from __future__ import annotations
 
 import os
-import urllib.error
-import urllib.request
 
 from . import dirlock, util
 
@@ -61,19 +59,61 @@ def _port(env: str, default: int) -> int:
         return default
 
 
-def server_busy(timeout: float = 2.0) -> dict | None:
+def _health(port: int, timeout: float, tick) -> bool:
+    """Does something answer `GET /health` on 127.0.0.1:port within `timeout`? Waits in 0.1 s
+    slices and calls `tick()` between them (the caller's signal check)."""
+    import errno
+    import select
+    import socket
+    import time
+
+    end = time.monotonic() + timeout
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    except OSError:
+        return False
+    try:
+        s.setblocking(False)
+        err = s.connect_ex(("127.0.0.1", port))
+        connected = err == 0
+        while not connected:
+            if err not in (errno.EINPROGRESS, errno.EWOULDBLOCK, errno.EAGAIN, errno.EALREADY):
+                return False  # refused
+            tick()
+            if time.monotonic() >= end:
+                return False
+            _, w, _ = select.select([], [s], [], 0.1)
+            if w:
+                err = s.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
+                if err:
+                    return False
+                connected = True
+        s.setblocking(True)
+        s.settimeout(max(0.1, end - time.monotonic()))
+        s.sendall(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+        s.setblocking(False)
+
+        while time.monotonic() < end:
+            tick()
+            r, _, _ = select.select([s], [], [], 0.1)
+            if r:
+                try:
+                    return bool(s.recv(16))  # any answer at all
+                except OSError:
+                    return False
+        return False
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def server_busy(timeout: float = 2.0, tick=lambda: None) -> dict | None:
     """An s2v TTS / aligner server answering /health (s2v genPreflight): busy (`orphan`)."""
     for env, default in (("S2V_TTS_PORT", 47861), ("S2V_ALIGNER_PORT", 47862)):
         port = _port(env, default)
-        url = "http://127.0.0.1:%d/health" % port
-        try:
-            with urllib.request.urlopen(url, timeout=timeout):
-                pass
-        except urllib.error.HTTPError:
-            pass  # it answered
-        except (OSError, ValueError):
-            continue  # refused, timed out: no server
-        return {"reason": "orphan", "holder": {"port": port}}
+        if _health(port, timeout, tick):
+            return {"reason": "orphan", "holder": {"port": port}}
     return None
 
 
@@ -90,7 +130,7 @@ def memory_busy(free_gib: float | None) -> dict | None:
     return None
 
 
-def try_machine(fields: dict, free_gib: float | None, env=None) -> tuple[str | None, dict | None]:
+def try_machine(fields: dict, free_gib: float | None, env=None, tick=lambda: None) -> tuple[str | None, dict | None]:
     """Take the machine lock, then check what runs without it. (token, None) or (None, busy)."""
     lock = machine_lock_path()
     r = dirlock.acquire(lock, fields, env=env)
@@ -98,7 +138,11 @@ def try_machine(fields: dict, free_gib: float | None, env=None) -> tuple[str | N
         return None, {"reason": "breaking", "holder": None}
     if r.status != "acquired":
         return None, {"reason": "lock", "holder": describe_holder(r.owner)}
-    busy = resident_busy() or server_busy() or memory_busy(free_gib)
+    try:
+        busy = resident_busy() or server_busy(tick=tick) or memory_busy(free_gib)
+    except BaseException:  # tick() ended the caller (a signal): never keep the lock
+        dirlock.release(lock, r.token)
+        raise
     if busy:
         dirlock.release(lock, r.token)
         return None, busy

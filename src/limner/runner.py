@@ -172,6 +172,9 @@ class RunCommand:
             st = result.new_status(getattr(self, "run_id", None), None, state, generator_name())
             st.update(kw)
             return st
+        cur = self.att.read_status()
+        if cur and cur.get("state") in result.FINAL:
+            return cur  # already closed (by `cancel` after every other writer looked gone)
         st = self.st
         st["state"] = state
         st["pending"] = list(self.job_ids)
@@ -237,7 +240,7 @@ class RunCommand:
             raise bad("--wait must be 0 to %d seconds" % MAX_WAIT)
         root = paths.Root(a.root, a.state_dir)
         lock_ = models.load_lock()
-        spec = load_job_file(a.job)
+        spec = load_job_file(root.readable(a.job, "--job"))
         jl = jobs.validate(spec, root, lock_)
         ids = {j.id for j in jl}
         force, accept = parse_ids(a.force), parse_ids(a.accept)
@@ -278,7 +281,7 @@ class RunCommand:
         os.makedirs(att.dir)
         util.write_json_atomic(att.p("job.json"), {"job": spec, "force": force, "accept": accept,
                                                    "root": root.real, "state_dir": root.state_dir,
-                                                   "job_file": os.path.abspath(a.job)})
+                                                   "job_file": root.readable(a.job, "--job")})
         util.write_json_atomic(att.p("run.json"), me)
         free = util.free_gib()
         lock_gen = lock_["generation"]
@@ -300,7 +303,7 @@ class RunCommand:
         while True:
             self.check_signal()
             self.check_cancel()
-            tok, busy = lock.try_machine(mfields, free)
+            tok, busy = lock.try_machine(mfields, free, tick=self.check_signal)
             if tok:
                 self.tokens["machine"] = tok
                 break

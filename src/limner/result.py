@@ -52,6 +52,10 @@ def exit_code(st: dict) -> int:
         codes.add(util.BUSY)
     if state in ("crashed", "cancelled", "orphan_child"):
         codes.add(util.FAILED)
+    if state == "failed" and not any(f.get("reason") == "environment" for f in failed):
+        codes.add(util.FAILED)  # an attempt that ended early is never a success
+    if state in FINAL and state != "busy" and st.get("pending"):
+        codes.add(util.FAILED)  # work left undone
     if any(f.get("reason") != "environment" for f in failed):
         codes.add(util.FAILED)
     for b in st.get("blocked") or []:

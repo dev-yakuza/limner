@@ -104,6 +104,9 @@ def run_fake(spec: dict, ev: Events) -> int:
         save_png(Image.new("RGB", (j["width"], j["height"]), color), j["tmp_out"])
         ev.emit("done", id=j["id"], tmp_out=j["tmp_out"], seconds=round(time.time() - t, 2),
                 started_at=started, peak_gib=0.0)
+        if os.environ.get("LIMNER_FAKE_ABORT_AFTER_ID") == j["id"]:
+            time.sleep(0.5)  # let the supervisor commit the reported job first
+            os.abort()
     return 0
 
 

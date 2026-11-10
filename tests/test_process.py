@@ -101,7 +101,7 @@ def test_status_and_cancel_of_unknown_run_are_12(env):
 
 def test_run_writes_result_file(env):
     jf = write_job(env["root"], [job("a")])
-    res = os.path.join(env["tmp"], "res.json")
+    res = os.path.join(env["root"], "res.json")
     obj, code = lmn("run", "--job", jf, "--root", env["root"], "--result", res)
     assert code == 0 and read(res) == obj
     status(env, obj, wait=30)
@@ -351,9 +351,8 @@ def test_worker_and_child_reset_signals_even_from_a_blocking_parent(env, monkeyp
     wait_for(lambda: read(os.path.join(att, "child.json")), what="child")
     reports = wait_for(lambda: len(os.listdir(rep)) >= 2 and [read(os.path.join(rep, n)) for n in os.listdir(rep)],
                        what="reports")
-    kinds = {("worker" if "limner.worker" in " ".join(r["argv"]) or r["argv"][0].endswith("worker.py") else "child")
-             for r in reports}
-    assert len(reports) >= 2 and kinds
+    kinds = {os.path.basename(r["argv"][0]) for r in reports}
+    assert kinds == {"worker.py", "child.py"}, kinds
     for r in reports:
         assert r["blocked"] == [] and r["term_default"] and r["int_default"], r
     t = time.time()
@@ -373,9 +372,10 @@ def test_signal_during_popen_kills_the_new_worker(env, monkeypatch):
     obj, rc, err = result_of(p)
     assert rc == 11 and obj["state"] == "failed" and obj["failed"][0]["reason"] == "signal:15", (obj, err)
     att = attempt_dirs(env["root"])[0]
-    sp = read(os.path.join(att, "spawn.json"))
-    if sp:
-        assert not alive(sp["pid"], sp["pid_start"])
+    # the worker's argv carries the attempt id: no process with it may survive (spawn.json may not exist)
+    left = subprocess.run(["pgrep", "-f", "limner.worker .* %s" % os.path.basename(att)], capture_output=True,
+                          text=True).stdout.split()
+    assert left == [], left
     assert not os.path.exists(me_lock)
     st, code = lmn("status", "--run-id", obj["run_id"], "--root", env["root"])
     assert (st["state"], code) == ("failed", 11)
@@ -558,3 +558,108 @@ def test_second_run_of_the_same_run_id_reports_the_first(env, monkeypatch):
     again, code = lmn("run", "--job", os.path.join(env["root"], "job.json"), "--root", env["root"])
     assert code == 0 and again["attempt"] == obj["attempt"] and again["state"] in ("starting", "running")
     assert status(env, obj, wait=30)[1] == 0
+
+
+# --------------------------------------------------------------------------- review round 1
+
+
+def test_child_dying_after_its_last_report_is_not_success(env, monkeypatch):
+    """R1-1: the child reports `done` for the last job of its stage, then dies by a signal."""
+    monkeypatch.setenv("LIMNER_FAKE_ABORT_AFTER_ID", "a")
+    obj = start(env, [job("a"), job("b", refs=["out/a.png"])])
+    st, code = status(env, obj, wait=30)
+    assert (st["state"], code) == ("failed", 11), st
+    assert [d["id"] for d in st["done"]] == ["a"] and st["pending"] == ["b"]
+    assert st["failed"] and st["failed"][0]["id"] is None and st["failed"][0]["reason"] == "metal"
+
+
+def test_cancel_does_not_close_while_run_is_alive_before_go(env, tmp_path):
+    """R1-5: the worker died before go, `run` still lives: cancel must not write over run."""
+    g = Gates(tmp_path, ["before_go"])
+    jf = write_job(env["root"], [job("a")])
+    p = popen_lmn("run", "--job", jf, "--root", env["root"], env=g.env())
+    g.reached("before_go")
+    att = attempt_dirs(env["root"])[0]
+    rid = os.path.basename(os.path.dirname(os.path.dirname(att)))
+    sp = read(os.path.join(att, "spawn.json"))
+    kill(sp["pid"])
+    wait_for(lambda: not alive(sp["pid"], sp["pid_start"]), what="worker gone")
+    st, code = lmn("cancel", "--run-id", rid, "--root", env["root"], "--wait-seconds", "1")
+    assert code == 10, st  # run is still a writer
+    p.send_signal(signal.SIGTERM)
+    obj, rc, _ = result_of(p)
+    assert rc == 11 and obj["failed"][0]["reason"] == "signal:15"
+    st, code = lmn("status", "--run-id", rid, "--root", env["root"])
+    assert st["state"] == "failed"
+
+
+def test_cancel_leaves_a_crashed_attempt_crashed(env, tmp_path):
+    """R1-6: all writers gone without a request: cancel reports crashed, not cancelled."""
+    g = Gates(tmp_path, ["before_go"])
+    jf = write_job(env["root"], [job("a")])
+    p = popen_lmn("run", "--job", jf, "--root", env["root"], env=g.env())
+    g.reached("before_go")
+    att = attempt_dirs(env["root"])[0]
+    rid = os.path.basename(os.path.dirname(os.path.dirname(att)))
+    sp = read(os.path.join(att, "spawn.json"))
+    p.kill()
+    p.wait()
+    wait_for(lambda: not alive(sp["pid"], sp["pid_start"]), what="worker ends on EOF")
+    st, code = lmn("cancel", "--run-id", rid, "--root", env["root"])
+    assert (st["state"], code) == ("crashed", 11)
+    assert read(os.path.join(att, "status.json"))["state"] == "starting"
+
+
+def test_state_dir_under_git_or_claude_is_refused(env):
+    """R1-2."""
+    jf = write_job(env["root"], [job("a")])
+    for sd in (".git/hooks", ".Claude/x", "sub/.git"):
+        obj, code = lmn("run", "--job", jf, "--root", env["root"], "--state-dir", os.path.join(env["root"], sd))
+        assert code == 2 and ".git" in obj["error"], obj
+    assert not os.path.exists(os.path.join(env["root"], ".git"))
+
+
+def test_job_and_result_paths_stay_in_root(env):
+    """R1-13."""
+    jf = write_job(env["tmp"], [job("a")])
+    obj, code = lmn("run", "--job", jf, "--root", env["root"], "--check")
+    assert code == 2 and "outside" in obj["error"]
+    jf = write_job(env["root"], [job("a")])
+    obj, code = lmn("run", "--job", jf, "--root", env["root"], "--check", "--result", os.path.join(env["tmp"], "r.json"))
+    assert code == 2 and not os.path.exists(os.path.join(env["tmp"], "r.json"))
+
+
+def test_signal_during_a_slow_health_check_is_seen_at_once(env, monkeypatch):
+    """R1-11: a port that accepts but never answers; the health wait is split, so SIGTERM ends
+    `run` quickly and the machine lock is released."""
+    import socket
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(8)
+    try:
+        monkeypatch.setenv("S2V_TTS_PORT", str(srv.getsockname()[1]))
+        jf = write_job(env["root"], [job("a")])
+        p = popen_lmn("run", "--job", jf, "--root", env["root"])
+        wait_for(lambda: (dirlock.read_owner(machine_lock(env)) or {}).get("pid") == p.pid, what="lock")
+        t = time.time()
+        p.send_signal(signal.SIGTERM)
+        obj, rc, err = result_of(p)
+        assert rc == 11 and obj["failed"][0]["reason"] == "signal:15", (obj, err)
+        assert time.time() - t < 1.0
+        assert not os.path.exists(machine_lock(env))
+    finally:
+        srv.close()
+
+
+def test_generate_ctrl_c_cancels(env, monkeypatch):
+    """R1-12: Ctrl-C (SIGINT to the whole group) while generating ends in cancelled with JSON."""
+    monkeypatch.setenv("LIMNER_FAKE_SECONDS", "60")
+    jf = write_job(env["root"], [job("a")])
+    p = subprocess.Popen([sys.executable, "-m", "limner", "generate", "--job", jf, "--root", env["root"]],
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    wait_for(lambda: attempt_dirs(env["root"]) and read(os.path.join(attempt_dirs(env["root"])[0], "child.json")),
+             what="child")
+    os.killpg(p.pid, signal.SIGINT)
+    obj, rc, err = result_of(p, timeout=90)
+    assert (obj["state"], rc) == ("cancelled", 0), (obj, err)

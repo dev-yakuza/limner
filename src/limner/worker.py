@@ -223,53 +223,58 @@ class Supervisor:
         finally:
             os.close(rfd)
             logf.close()
-        cs = util.proc_start(child.pid)
-        util.write_json_atomic(self.att.p("child.json"), {"pid": child.pid, "pid_start": cs, "stage": si})
-        limit = memory_limit()
-        current = entries[0]["id"]
-        self.st["current"] = current
-        self.write()
-        reported: set[str] = set()
-        killed_for_memory = False
-        env_message = None
-        pos = 0
-        last_mem = 0.0
-        rc = None
-        while True:
-            pos, events = read_events(events_file, pos)
-            for ev in events:
-                kind, jid = ev.get("event"), ev.get("id")
-                if kind == "start":
-                    current = jid
-                    self.st["current"] = jid
-                    self.write()
-                elif kind == "done" and jid in by_id:
-                    reported.add(jid)
-                    self.commit(by_id[jid], ev)
-                    self.write()
-                elif kind == "error" and jid in by_id:
-                    reported.add(jid)
-                    self.fail(jid, "error", str(ev.get("message")))
-                    self.write()
-                elif kind == "environment":
-                    env_message = str(ev.get("message"))
-            if rc is not None:
-                break
-            rc = child.poll()
-            if rc is not None:
-                continue  # read the last events once more
-            now = time.monotonic()
-            if now - last_mem >= MEMORY_EVERY:
-                last_mem = now
-                fp = footprint_gib(child.pid)
-                if fp is not None:
-                    self.st["peak_gib"] = round(max(self.st.get("peak_gib") or 0, fp), 1)
-                    if fp > limit:
-                        log("child footprint %.1f GiB > limit %.1f GiB: killing it" % (fp, limit))
-                        killed_for_memory = True
-                        child.kill()
-            time.sleep(POLL)
-        os.close(wfd)
+        try:
+            cs = util.proc_start(child.pid)
+            util.write_json_atomic(self.att.p("child.json"), {"pid": child.pid, "pid_start": cs, "stage": si})
+            limit = memory_limit()
+            current = entries[0]["id"]
+            self.st["current"] = current
+            self.write()
+            reported: set[str] = set()
+            killed_for_memory = False
+            env_message = None
+            pos = 0
+            last_mem = 0.0
+            rc = None
+            while True:
+                pos, events = read_events(events_file, pos)
+                for ev in events:
+                    kind, jid = ev.get("event"), ev.get("id")
+                    if kind == "start":
+                        current = jid
+                        self.st["current"] = jid
+                        self.write()
+                    elif kind == "done" and jid in by_id:
+                        reported.add(jid)
+                        self.commit(by_id[jid], ev)
+                        self.write()
+                    elif kind == "error" and jid in by_id:
+                        reported.add(jid)
+                        self.fail(jid, "error", str(ev.get("message")))
+                        self.write()
+                    elif kind == "environment":
+                        env_message = str(ev.get("message"))
+                if rc is not None:
+                    break
+                rc = child.poll()
+                if rc is not None:
+                    continue  # read the last events once more
+                now = time.monotonic()
+                if now - last_mem >= MEMORY_EVERY:
+                    last_mem = now
+                    fp = footprint_gib(child.pid)
+                    if fp is not None:
+                        self.st["peak_gib"] = round(max(self.st.get("peak_gib") or 0, fp), 1)
+                        if fp > limit:
+                            log("child footprint %.1f GiB > limit %.1f GiB: killing it" % (fp, limit))
+                            killed_for_memory = True
+                            child.kill()
+                time.sleep(POLL)
+        finally:
+            os.close(wfd)
+            if child.poll() is None:  # leaving by an exception: never keep a child without the locks
+                child.kill()
+            child.wait()
         rest = [e["id"] for e in entries if e["id"] not in reported]
         if rc == 0:
             for jid in rest:
@@ -292,6 +297,8 @@ class Supervisor:
             reason, message = "error", "the child exited with code %d" % rc
         if current in rest:
             self.fail(current, reason, message)
+        else:  # every job of the stage was reported, then the child died: the run still ended early
+            self.st["failed"].append({"id": None, "reason": reason, "message": message})
         return "failed"
 
     def commit(self, item, ev: dict) -> None:

@@ -124,6 +124,20 @@ def dispatch(args) -> tuple[dict, int]:
     raise Fail(util.BAD, "usage: lmn {run,generate,status,cancel,compose,rasterize,doctor,setup,fonts,gc} …")
 
 
+def check_result_path(args) -> None:
+    """--result stays inside --root (P5) for commands that have one; doctor/setup/fonts/gc have no
+    root, so their --result may go anywhere."""
+    out = getattr(args, "result", None)
+    root = getattr(args, "root", None)
+    if out and root:
+        from .paths import Root
+
+        args.result = None  # not written unless it passes
+
+        r = Root(root, getattr(args, "state_dir", None))
+        args.result = r.writable(out, "--result", png=False)
+
+
 def emit(obj: dict, args) -> None:
     line = json.dumps(obj, ensure_ascii=False)
     out = getattr(args, "result", None) if args is not None else None
@@ -144,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             import limner
             emit({"contract": util.CONTRACT, "limner": limner.__version__}, args)
             return 0
+        check_result_path(args)
         obj, code = dispatch(args)
     except Fail as e:
         obj = {"contract": util.CONTRACT, "error": e.message}
@@ -151,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
         code = e.code
     except SystemExit as e:  # argparse --help
         return int(e.code or 0)
+    except KeyboardInterrupt:
+        obj = {"contract": util.CONTRACT, "error": "interrupted"}
+        code = util.FAILED
     except Exception as e:  # noqa: BLE001 - unexpected: a bug, exit 70
         traceback.print_exc()
         obj = {"contract": util.CONTRACT, "error": "internal error: %s" % e}

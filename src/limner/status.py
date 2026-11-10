@@ -30,14 +30,15 @@ def locate(args) -> runs.Attempt:
 def actors(att: runs.Attempt) -> dict:
     """Who may still write this attempt: the worker and its child (after spawn.json), else the
     `run` that made it. {"worker": bool, "child": bool, "run": bool}."""
+    r = att.read("run.json") or {}
+    run_alive = util.alive(r.get("pid"), r.get("pid_start"))  # until go it writes; then it exits at once
     spawn = att.read("spawn.json")
     if spawn:
         child = att.read("child.json")
         return {"worker": util.alive(spawn.get("pid"), spawn.get("pid_start")),
                 "child": bool(child) and util.alive(child.get("pid"), child.get("pid_start")),
-                "run": False, "spawned": True}
-    r = att.read("run.json") or {}
-    return {"worker": False, "child": False, "run": util.alive(r.get("pid"), r.get("pid_start")), "spawned": False}
+                "run": run_alive, "spawned": True}
+    return {"worker": False, "child": False, "run": run_alive, "spawned": False}
 
 
 def judge(att: runs.Attempt) -> dict:
@@ -51,7 +52,10 @@ def judge(att: runs.Attempt) -> dict:
     a = actors(att)
     if a["worker"] or a["run"]:
         return st
-    st = dict(st)
+    again = att.read_status()  # the last writer may have closed it and exited since the first read
+    if again and again.get("state") not in result.LIVE:
+        return again
+    st = dict(again or st)
     if a["child"]:
         st["state"] = "orphan_child"
     elif att.cancel_requested():
@@ -59,6 +63,7 @@ def judge(att: runs.Attempt) -> dict:
     else:
         st["state"] = "crashed"
     st["judged"] = True
+    st["actors"] = {k: a[k] for k in ("worker", "child", "run")}
     return st
 
 
@@ -129,9 +134,12 @@ def cmd_cancel(args) -> tuple[dict, int]:
     wait = 30 if args.wait_seconds is None else args.wait_seconds
     if not 0 <= wait <= MAX_WAIT:
         raise util.bad("--wait-seconds must be 0 to %d" % MAX_WAIT)
-    st = att.read_status()
-    if st and st.get("state") in result.FINAL:
-        return st, result.exit_code(st)
+    st = judge(att)
+    if st.get("state") in result.FINAL and st.get("state") != "orphan_child":
+        if st.get("judged") and st.get("state") == "cancelled":  # an earlier request, all writers gone
+            st = _write_cancelled(att)
+            return st, (util.OK if st.get("state") == "cancelled" else result.exit_code(st))
+        return st, result.exit_code(st)  # also `crashed`: not turned into a cancel
     if not att.cancel_requested():
         util.write_text_atomic(att.p("cancel_requested"), util.utc_now() + "\n")
     end = time.monotonic() + wait

@@ -26,6 +26,12 @@ class Root:
         sd = os.path.abspath(state_dir) if state_dir else os.path.join(self.real, ".limner")
         self.state_dir = self.inside(sd, what="--state-dir")
         self.state_rel = self.rel(self.state_dir)
+        self.refuse_forbidden(self.state_dir, "--state-dir")
+
+    def refuse_forbidden(self, real: str, what: str) -> None:
+        """Nothing is written under .git/ or .claude/ (spec §5): outputs, the state dir, --result."""
+        if any(util.fold(x) in FORBIDDEN for x in self.rel(real).split("/")):
+            raise bad("%s %s: writing under .git/ or .claude/ is refused" % (what, real))
 
     # ------------------------------------------------------------------ checks
 
@@ -51,9 +57,7 @@ class Root:
 
     def writable(self, path: str, what: str = "out", png: bool = True) -> str:
         real = self.inside(path, what)
-        parts = [util.fold(x) for x in self.rel(real).split("/")]
-        if any(x in FORBIDDEN for x in parts):
-            raise bad("%s %s: writing under .git/ or .claude/ is refused" % (what, path))
+        self.refuse_forbidden(real, what)
         if png and not real.casefold().endswith(".png"):
             raise bad("%s %s: only .png outputs" % (what, path))
         if os.path.isdir(real):
@@ -94,8 +98,9 @@ class Root:
 
 
 def safe_makedirs(root: Root, path: str) -> None:
-    """mkdir -p, refusing to create anything outside the root (checked again after)."""
+    """mkdir -p, refusing to create anything outside the root or under .git/ / .claude/."""
     real = root.inside(path, "directory")
+    root.refuse_forbidden(real, "directory")
     os.makedirs(real, exist_ok=True)
     if not root._within(os.path.realpath(real)):
         raise bad("directory %s left --root" % path)
@@ -115,7 +120,12 @@ def tmp_owner_dead(name: str) -> bool:
         pid, ms = int(pid_s), int(ms_s)
     except ValueError:
         return True
-    start = util.proc_start(pid)
+    from . import dirlock
+
+    try:
+        start = dirlock.proc_start(pid)
+    except dirlock.CannotCheck:
+        return False  # cannot check: not adopted / not reported now
     if start is None:
         return True
     got = util.start_ms(start)

@@ -144,8 +144,10 @@ def proc_state(pid) -> tuple[str | None, str | None]:
     try:
         out = subprocess.run(["ps", "-o", "stat=", "-o", "lstart=", "-p", str(int(pid))], env=env,
                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    except OSError:
-        return None, None
+    except OSError as e:  # e.g. fork fails under memory pressure: we do not know
+        raise dirlock.CannotCheck("cannot run ps: %s" % e)
+    if out.returncode < 0:
+        raise dirlock.CannotCheck("ps ended by signal %d" % -out.returncode)
     if out.returncode != 0:
         return None, None
     text = out.stdout.decode("utf-8", "replace").strip()
@@ -159,7 +161,10 @@ def alive(pid, pid_start) -> bool:
     """Alive = same pid and start time, and not a zombie (spec §6.1 `status`)."""
     if not pid or not pid_start:
         return False
-    lstart, stat = proc_state(pid)
+    try:
+        lstart, stat = proc_state(pid)
+    except dirlock.CannotCheck:
+        return True  # like dirlock: a process we cannot check is taken as alive
     if lstart is None:
         return False
     if not dirlock.same_start(lstart, pid_start):

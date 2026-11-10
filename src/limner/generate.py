@@ -13,12 +13,29 @@ from . import util
 
 
 def _lmn(*argv: str) -> tuple[dict, int]:
-    p = subprocess.run([sys.executable, "-m", "limner", *argv], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    """Run `lmn …` and read its JSON. A Ctrl-C reaches the child too (same process group): wait
+    for it to finish its own handling instead of killing it, then raise."""
+    p = subprocess.Popen([sys.executable, "-m", "limner", *argv], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
+    interrupted = False
+    while True:
+        try:
+            out, _ = p.communicate()
+            break
+        except KeyboardInterrupt:
+            interrupted = True
     try:
-        obj = json.loads(p.stdout.decode("utf-8").strip().splitlines()[-1])
+        obj = json.loads(out.decode("utf-8").strip().splitlines()[-1])
     except (ValueError, IndexError):
         obj = {"error": "no JSON from lmn %s" % argv[0]}
+    if interrupted:
+        raise Interrupted(obj, p.returncode)
     return obj, p.returncode
+
+
+class Interrupted(Exception):
+    def __init__(self, obj, code):
+        super().__init__("interrupted")
+        self.obj, self.code = obj, code
 
 
 def cmd_generate(args) -> tuple[dict, int]:
@@ -30,7 +47,14 @@ def cmd_generate(args) -> tuple[dict, int]:
             argv += ["--%s" % flag, v]
     if args.wait is not None:
         argv += ["--wait", str(args.wait)]
-    obj, code = _lmn(*argv)
+    try:
+        obj, code = _lmn(*argv)
+    except Interrupted as e:
+        if e.obj.get("state") != "starting":
+            return e.obj, e.code  # run handled the signal itself (signal:2, exit 11)
+        obj, code = e.obj, e.code
+        print("[lmn] cancelling…", file=sys.stderr, flush=True)
+        return _cancel(obj, base)
     if obj.get("state") != "starting" or code != 0:
         return obj, code
     ident = ["--run-id", obj["run_id"], "--attempt", obj["attempt"]] + base
@@ -46,6 +70,15 @@ def cmd_generate(args) -> tuple[dict, int]:
                 last = line
             if code != util.RUNNING:
                 return st, code
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, Interrupted):
         print("[lmn] cancelling…", file=sys.stderr, flush=True)
-        return _lmn("cancel", *ident, "--wait-seconds", "60")
+        return _cancel(obj, base)
+
+
+def _cancel(obj: dict, base: list) -> tuple[dict, int]:
+    ident = ["--run-id", obj["run_id"], "--attempt", obj["attempt"]] + base
+    while True:
+        try:
+            return _lmn("cancel", *ident, "--wait-seconds", "60")
+        except Interrupted as e:
+            return e.obj, e.code
