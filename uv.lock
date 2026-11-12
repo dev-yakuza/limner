@@ -8,9 +8,6 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'linux'",
 ]
 
-[manifest]
-constraints = [{ name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.32.3" }]
-
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -266,6 +263,7 @@ dependencies = [
 generate = [
     { name = "huggingface-hub", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
     { name = "mflux", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
+    { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 
 [package.dev-dependencies]
@@ -278,6 +276,7 @@ requires-dist = [
     { name = "fonttools", specifier = "==4.66.1" },
     { name = "huggingface-hub", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'generate'" },
     { name = "mflux", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'generate'", specifier = "==0.22.0" },
+    { name = "mlx", marker = "platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'generate'", specifier = "==0.32.3" },
     { name = "pillow", specifier = "==12.3.0" },
     { name = "resvg-py", specifier = "==0.5.0" },
 ]

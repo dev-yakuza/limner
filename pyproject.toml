@@ -16,6 +16,9 @@ dependencies = [
 # Model generation runs on Apple silicon only (MLX).
 generate = [
     "mflux==0.22.0 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    # The MLX build script2video's imagegen is locked to (the 4-bit weights are shared with it).
+    # Pinned here, not as a uv constraint: `uv tool install` ignores [tool.uv] settings.
+    "mlx==0.32.3 ; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "huggingface_hub ; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
@@ -34,7 +37,3 @@ packages = ["src/limner"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
-[tool.uv]
-# The MLX build script2video's imagegen is locked to (the 4-bit weights are shared with it).
-constraint-dependencies = ["mlx==0.32.3 ; sys_platform == 'darwin' and platform_machine == 'arm64'"]
